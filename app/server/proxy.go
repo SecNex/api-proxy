@@ -25,11 +25,11 @@ type Proxy httputil.ReverseProxy
 func NewProxyServer(config *config.ProxyConfig) (*ProxyServer, error) {
 	targetURL, err := url.Parse(config.TargetHost)
 	if err != nil {
-		log.Printf("[ERROR] Failed to parse target URL: %s - %v", config.TargetHost, err)
+		log.Printf("🔴 Failed to parse target URL: %s - %v", config.TargetHost, err)
 		return nil, err
 	}
 
-	log.Printf("[INIT] Proxy server initialized. Target: %s", targetURL.String())
+	log.Printf("🟢 Proxy server target: %s", targetURL.String())
 
 	proxy := httputil.NewSingleHostReverseProxy(targetURL)
 
@@ -43,21 +43,20 @@ func RequestHandler(p *ProxyServer) func(w http.ResponseWriter, r *http.Request)
 	return func(w http.ResponseWriter, r *http.Request) {
 		startTime := time.Now()
 
-		// Log der eingehenden Anfrage
-		log.Printf("[INCOMING] %s %s from %s | User-Agent: %s",
+		log.Printf("🔎 %s %s from %s | User-Agent: %s",
 			r.Method, r.URL.Path, r.RemoteAddr, r.UserAgent())
 
 		user, pass, ok := r.BasicAuth()
 		if !ok {
-			log.Printf("[AUTH] Unauthorized access attempt from %s", r.RemoteAddr)
+			log.Printf("🔒 Unauthorized access attempt from %s", r.RemoteAddr)
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
 
 		tenantId := r.Header.Get("X-Tenant-Id")
 		if tenantId == "" {
-			log.Printf("[AUTH] Missing X-Tenant-Id header from %s", r.RemoteAddr)
-			http.Error(w, "Unauthorized - Missing Tenant ID", http.StatusUnauthorized)
+			log.Printf("🔒 Missing X-Tenant-Id header from %s", r.RemoteAddr)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
 
@@ -67,29 +66,31 @@ func RequestHandler(p *ProxyServer) func(w http.ResponseWriter, r *http.Request)
 		originalDirector := proxy.Director
 		proxy.Director(tempReq)
 
-		log.Printf("[TARGET] Forwarding to: %s", tempReq.URL.String())
+		log.Printf("🔗 Forwarding to: %s", tempReq.URL.String())
 
 		proxy.Director = originalDirector
 
+		tempReq.Header = http.Header{}
+
 		accessTokenTarget := *p.getToken(user, pass, tenantId)
 		if len(accessTokenTarget) > 0 {
-			r.Header.Set("Authorization", "Bearer "+accessTokenTarget)
-			log.Printf("[AUTH] Bearer token added to request")
+			log.Printf("🔑 Obtained access token for tenant %s", tenantId)
+			tempReq.Header.Set("Authorization", "Bearer "+accessTokenTarget)
+		} else {
+			log.Printf("🔒 Failed to obtain access token for tenant %s", tenantId)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		}
 
-		wrappedWriter := &loggingResponseWriter{
-			ResponseWriter: w,
-			statusCode:     http.StatusOK,
-		}
+		wrappedWriter := &loggingResponseWriter{ResponseWriter: w, statusCode: http.StatusOK}
 
-		proxy.ServeHTTP(wrappedWriter, r)
+		proxy.ServeHTTP(wrappedWriter, tempReq)
 
 		duration := time.Since(startTime)
 		if wrappedWriter.statusCode >= 400 {
-			log.Printf("[RESPONSE] ❌ Status: %d | Duration: %v | Path: %s | Target: %s",
+			log.Printf("❌ Status: %d | Duration: %v | Path: %s | Target: %s",
 				wrappedWriter.statusCode, duration, r.URL.Path, tempReq.URL.String())
 		} else {
-			log.Printf("[RESPONSE] ✅ Status: %d | Duration: %v | Path: %s",
+			log.Printf("✅ Status: %d | Duration: %v | Path: %s",
 				wrappedWriter.statusCode, duration, r.URL.Path)
 		}
 	}
@@ -106,14 +107,12 @@ func (lrw *loggingResponseWriter) WriteHeader(code int) {
 }
 
 func (p *ProxyServer) getToken(username, password, tenant string) *string {
-	fmt.Println("Retrieving access token for tenant:", tenant)
 	url := p.config.TokenApiUrl + tenant + "/as/token.oauth2"
 
 	body := strings.NewReader("grant_type=client_credentials")
 
 	req, err := http.NewRequest("POST", url, body)
 	if err != nil {
-		log.Println("[ERROR] Error creating request:", err)
 		return nil
 	}
 
@@ -133,17 +132,12 @@ func (p *ProxyServer) getToken(username, password, tenant string) *string {
 		return nil
 	}
 
-	log.Printf("[TOKEN] Status code: %d", resp.StatusCode)
-
 	var result map[string]interface{}
 	if err := json.Unmarshal(bodyBytes, &result); err != nil {
 		return nil
 	}
 
-	log.Printf("[TOKEN] Response body: %s", string(bodyBytes))
-
 	if token, ok := result["access_token"].(string); ok {
-		fmt.Println("Retrieved access token:", token)
 		return &token
 	}
 
@@ -151,12 +145,9 @@ func (p *ProxyServer) getToken(username, password, tenant string) *string {
 }
 
 func (p *ProxyServer) Start() error {
-	log.Printf("[SERVER] Starting proxy server on port %s", p.config.Port)
-	log.Printf("[SERVER] Target host: %s", p.config.TargetHost)
-
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", RequestHandler(p))
 
-	log.Printf("[SERVER] Server listening on :%s", p.config.Port)
+	log.Printf("🚀 Proxy server started on :%s", p.config.Port)
 	return http.ListenAndServe(":"+p.config.Port, mux)
 }
