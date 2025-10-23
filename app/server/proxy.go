@@ -39,19 +39,6 @@ func NewProxyServer(config *config.ProxyConfig) (*ProxyServer, error) {
 	}, nil
 }
 
-func (p *ProxyServer) AuthMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		user, pass, ok := r.BasicAuth()
-		if !ok || user != p.config.Username || pass != p.config.Password {
-			log.Printf("[AUTH] Unauthorized access attempt from %s", r.RemoteAddr)
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
-		}
-		log.Printf("[AUTH] Successful authentication for user: %s", user)
-		next.ServeHTTP(w, r)
-	})
-}
-
 func RequestHandler(p *ProxyServer) func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		startTime := time.Now()
@@ -59,6 +46,13 @@ func RequestHandler(p *ProxyServer) func(w http.ResponseWriter, r *http.Request)
 		// Log der eingehenden Anfrage
 		log.Printf("[INCOMING] %s %s from %s | User-Agent: %s",
 			r.Method, r.URL.Path, r.RemoteAddr, r.UserAgent())
+
+		user, pass, ok := r.BasicAuth()
+		if !ok || user != p.config.Username || pass != p.config.Password {
+			log.Printf("[AUTH] Unauthorized access attempt from %s", r.RemoteAddr)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
 
 		proxy := (*httputil.ReverseProxy)(p.proxy)
 
@@ -70,7 +64,7 @@ func RequestHandler(p *ProxyServer) func(w http.ResponseWriter, r *http.Request)
 
 		proxy.Director = originalDirector
 
-		accessTokenTarget := *p.getToken()
+		accessTokenTarget := *p.getToken(user, pass)
 		if len(accessTokenTarget) > 0 {
 			r.Header.Set("Authorization", "Bearer "+accessTokenTarget)
 			log.Printf("[AUTH] Bearer token added to request")
@@ -104,7 +98,7 @@ func (lrw *loggingResponseWriter) WriteHeader(code int) {
 	lrw.ResponseWriter.WriteHeader(code)
 }
 
-func (p *ProxyServer) getToken() *string {
+func (p *ProxyServer) getToken(username, password string) *string {
 	url := p.config.TokenApiUrl
 
 	body := strings.NewReader("grant_type=client_credentials")
@@ -115,7 +109,7 @@ func (p *ProxyServer) getToken() *string {
 		return nil
 	}
 
-	auth := base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%s", p.config.ClientId, p.config.ClientSecret)))
+	auth := base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%s", username, password)))
 	req.Header.Set("Authorization", "Basic "+auth)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
@@ -150,8 +144,6 @@ func (p *ProxyServer) Start() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", RequestHandler(p))
 
-	authenticatedHandler := p.AuthMiddleware(mux)
-
 	log.Printf("[SERVER] Server listening on :%s", p.config.Port)
-	return http.ListenAndServe(":"+p.config.Port, authenticatedHandler)
+	return http.ListenAndServe(":"+p.config.Port, mux)
 }

@@ -3,24 +3,20 @@ package config
 import "git.secnex.io/secnex/api-proxy/utils"
 
 type ProxyConfig struct {
-	Port         string
-	Username     string
-	Password     string
-	TargetHost   string
-	TokenApiUrl  string
-	ClientId     string
-	ClientSecret string
+	Port        string
+	Username    string
+	Password    string
+	TargetHost  string
+	TokenApiUrl string
 }
 
-func NewProxyConfig(port, username, password, targetHost, TokenApiUrl, clientId, clientSecret string) *ProxyConfig {
+func NewProxyConfig(port, username, password, targetHost, TokenApiUrl string) *ProxyConfig {
 	return &ProxyConfig{
-		Port:         port,
-		Username:     username,
-		Password:     password,
-		TargetHost:   targetHost,
-		TokenApiUrl:  TokenApiUrl,
-		ClientId:     clientId,
-		ClientSecret: clientSecret,
+		Port:        port,
+		Username:    username,
+		Password:    password,
+		TargetHost:  targetHost,
+		TokenApiUrl: TokenApiUrl,
 	}
 }
 
@@ -31,7 +27,5 @@ func NewProxyConfigFromEnv() *ProxyConfig {
 		*utils.GetEnvOnly("PASSWORD"),
 		*utils.GetEnvOnly("TARGET_HOST"),
 		*utils.GetEnvOnly("API_TOKEN_URL"),
-		*utils.GetEnvOnly("API_CLIENT_ID"),
-		*utils.GetEnvOnly("API_CLIENT_SECRET"),
 	)
 }
