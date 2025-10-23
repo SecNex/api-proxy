@@ -48,9 +48,16 @@ func RequestHandler(p *ProxyServer) func(w http.ResponseWriter, r *http.Request)
 			r.Method, r.URL.Path, r.RemoteAddr, r.UserAgent())
 
 		user, pass, ok := r.BasicAuth()
-		if !ok || user != p.config.Username || pass != p.config.Password {
+		if !ok {
 			log.Printf("[AUTH] Unauthorized access attempt from %s", r.RemoteAddr)
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		tenantId := r.Header.Get("X-Tenant-Id")
+		if tenantId == "" {
+			log.Printf("[AUTH] Missing X-Tenant-Id header from %s", r.RemoteAddr)
+			http.Error(w, "Unauthorized - Missing Tenant ID", http.StatusUnauthorized)
 			return
 		}
 
@@ -64,7 +71,7 @@ func RequestHandler(p *ProxyServer) func(w http.ResponseWriter, r *http.Request)
 
 		proxy.Director = originalDirector
 
-		accessTokenTarget := *p.getToken(user, pass)
+		accessTokenTarget := *p.getToken(user, pass, tenantId)
 		if len(accessTokenTarget) > 0 {
 			r.Header.Set("Authorization", "Bearer "+accessTokenTarget)
 			log.Printf("[AUTH] Bearer token added to request")
@@ -98,14 +105,15 @@ func (lrw *loggingResponseWriter) WriteHeader(code int) {
 	lrw.ResponseWriter.WriteHeader(code)
 }
 
-func (p *ProxyServer) getToken(username, password string) *string {
-	url := p.config.TokenApiUrl
+func (p *ProxyServer) getToken(username, password, tenant string) *string {
+	fmt.Println("Retrieving access token for tenant:", tenant)
+	url := p.config.TokenApiUrl + tenant + "/as/token.oauth2"
 
 	body := strings.NewReader("grant_type=client_credentials")
 
 	req, err := http.NewRequest("POST", url, body)
 	if err != nil {
-		fmt.Println("Fehler beim Erstellen der Anfrage:", err)
+		log.Println("[ERROR] Error creating request:", err)
 		return nil
 	}
 
@@ -125,12 +133,17 @@ func (p *ProxyServer) getToken(username, password string) *string {
 		return nil
 	}
 
+	log.Printf("[TOKEN] Status code: %d", resp.StatusCode)
+
 	var result map[string]interface{}
 	if err := json.Unmarshal(bodyBytes, &result); err != nil {
 		return nil
 	}
 
+	log.Printf("[TOKEN] Response body: %s", string(bodyBytes))
+
 	if token, ok := result["access_token"].(string); ok {
+		fmt.Println("Retrieved access token:", token)
 		return &token
 	}
 
